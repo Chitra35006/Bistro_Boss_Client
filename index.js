@@ -111,7 +111,7 @@ async function run() {
     })
 
     //make_admin
-    app.patch('/users/admin/:id',async (req, res) => {
+    app.patch('/users/admin/:id',verifyToken,verifyAdmin,async (req, res) => {
       const id = req.params.id;
       const filter = { _id: new ObjectId(id) };
       const updatedDoc = {
@@ -124,7 +124,7 @@ async function run() {
     })
 
     //admin role---->delete
-    app.delete('/users/:id',async (req, res) => {
+    app.delete('/users/:id',verifyAdmin,verifyToken,async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) }
       const result = await usersCollection.deleteOne(query);
@@ -139,6 +139,19 @@ async function run() {
     app.get('/reviews', async(req, res) =>{
         const result = await reviewCollection.find().toArray();
         res.send(result);
+    })
+    //additemByAdmin
+    app.post('/menu',verifyToken,verifyAdmin, async (req, res) => {
+      const item = req.body;
+      const result = await menuCollection.insertOne(item);
+      res.send(result);
+    });
+    //deleteByAdmin
+    app.delete('/menu/:id', verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) }
+      const result = await menuCollection.deleteOne(query);
+      res.send(result);
     })
 
     //carts collection
@@ -161,6 +174,8 @@ async function run() {
       const result = await cartCollection.deleteOne(query);
       res.send(result);
     })
+   
+    
 
 
     // Send a ping to confirm a successful connection
