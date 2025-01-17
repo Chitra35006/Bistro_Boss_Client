@@ -3,7 +3,10 @@ const app = express();
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 
+
 require('dotenv').config()
+
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const port = process.env.PORT || 5000;
 
@@ -33,6 +36,7 @@ async function run() {
     const reviewCollection = client.db("bistroDB").collection("reviews");
     const cartCollection = client.db("bistroDB").collection("carts");
     const usersCollection = client.db("bistroDB").collection("users");
+    const paymentCollection = client.db("bistroDB").collection("payments");
 
        // jwt related api
        app.post('/jwt', async (req, res) => {
@@ -202,7 +206,131 @@ async function run() {
       const result = await cartCollection.deleteOne(query);
       res.send(result);
     })
-   
+
+      // payment intent
+      app.post('/create-payment-intent', async (req, res) => {
+        const { price } = req.body;
+        const amount = parseInt(price * 100);
+        console.log(amount, 'amount inside the intent')
+  
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount,
+          currency: 'usd',
+          payment_method_types: ['card']
+        });
+  
+        res.send({
+          clientSecret: paymentIntent.client_secret
+        })
+      });
+
+      //Payment Related API
+      app.post('/payments', async (req, res) => {
+        const payment = req.body;
+        const paymentResult = await paymentCollection.insertOne(payment);
+
+         //  carefully delete each item from the cart
+      console.log('payment info', payment);
+      const query = {
+        _id: {
+          $in: payment.cartIds.map(id => new ObjectId(id))
+        }
+      };
+
+      const deleteResult = await cartCollection.deleteMany(query);
+
+      res.send({ paymentResult, deleteResult });
+  
+        })
+
+        app.get('/payments/:email', verifyToken, async (req, res) => {
+          const query = { email: req.params.email }
+          if (req.params.email !== req.decoded.email) {
+            return res.status(403).send({ message: 'forbidden access' });
+          }
+          const result = await paymentCollection.find(query).toArray();
+          res.send(result);
+        })
+      
+    // stats or analytics
+    app.get('/admin-stats', verifyToken, verifyAdmin,async (req, res) => {
+      const users = await usersCollection.estimatedDocumentCount();
+      const menuItems = await menuCollection.estimatedDocumentCount();
+      const orders = await paymentCollection.estimatedDocumentCount();
+
+      //this is not the best way
+      // const payments = await paymentCollection.find().toArray();
+      // const revenue = payments.reduce((total, payment) => total + payment.price, 0);
+
+      const result = await paymentCollection.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalRevenue: {
+              $sum: '$price'
+            }
+          }
+        }
+      ]).toArray();
+
+      const revenue = result.length > 0 ? result[0].totalRevenue : 0;
+
+      res.send({
+        users,
+        menuItems,
+        orders,
+        revenue
+      })
+    })
+
+    
+    // order status
+    /**
+     * ----------------------------
+     *    NON-Efficient Way
+     * ------------------------------
+     * 1. load all the payments
+     * 2. for every menuItemIds (which is an array), go find the item from menu collection
+     * 3. for every item in the menu collection that you found from a payment entry (document)
+    */
+  
+   // using aggregate pipeline
+   app.get('/order-stats', verifyToken, verifyAdmin, async(req, res) =>{
+    const result = await paymentCollection.aggregate([
+      {
+        $unwind: '$menuItemIds'
+      },
+      {
+        $lookup: {
+          from: 'menu',
+          localField: 'menuItemIds',
+          foreignField: '_id',
+          as: 'menuItems'
+        }
+      },
+      {
+        $unwind: '$menuItems'
+      },
+      {
+        $group: {
+          _id: '$menuItems.category',
+          quantity:{ $sum: 1 },
+          revenue: { $sum: '$menuItems.price'} 
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          category: '$_id',
+          quantity: '$quantity',
+          revenue: '$revenue'
+        }
+      }
+    ]).toArray();
+
+    res.send(result);
+
+  })
     
 
 
